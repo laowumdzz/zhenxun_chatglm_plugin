@@ -1,3 +1,4 @@
 aiofiles
 httpx
 PyJWT
+nonebot-plugin-session
