@@ -1,0 +1,2 @@
+# zhenxun_chatglm_plugin
+适用于真寻bot机器人的chatglm在线对话插件
