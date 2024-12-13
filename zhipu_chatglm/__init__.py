@@ -91,44 +91,49 @@ if ((isinstance(prompt_path, Path) and prompt_path.exists()) or
     nicknames = list(nicknames) if nicknames else None
 
 
-# TODO 采用system方法定义预设
-# 导入预设, user模式
+# 导入预设
 async def file_init(key_id, nickname) -> str:
     log_file_path = log_dir / f"{key_id}.json"
     prompts = prompt[nickname]
     logger.info(f'创建/打开文件: {log_file_path}, 并导入 {nickname}预设')
     for index, value in enumerate(prompts['prompt_sys']):
-        sys_data = json.dumps({"role": "user", "content": value}, ensure_ascii=False)
-        ait_data = json.dumps({"role": "assistant", "content": prompts["prompt_ait"][index]}, ensure_ascii=False)
+        sys_data = {"role": "system", "content": value}
+        ait_data = {"role": "assistant", "content": prompts["prompt_ait"][index]}
         await write_file(log_file_path, sys_data)
         await write_file(log_file_path, ait_data)
     return f"成功导入{nickname}预设"
 
 
 # 写入历史聊天记录文件
-async def write_file(log_file_path, json_data) -> None:
+async def write_file(log_file_path: Path, dict_data: dict) -> None:
     try:
-        if log_file_path.exists():
-            async with aiofiles.open(log_file_path, 'r+', encoding='utf-8') as file:
-                await file.seek(0, os.SEEK_END)
-                # 如果文件不为空，则在现有内容后添加逗号和换行符
-                if (await file.tell()) > 0:
-                    await file.write(',\n')
-                await file.write(json_data)
-        else:
-            async with aiofiles.open(log_file_path, 'w', encoding='utf-8') as file:
-                await file.write(json_data)
+        if isinstance(dict_data, dict):
+            if log_file_path.exists():
+                async with aiofiles.open(log_file_path, 'r+', encoding='utf-8') as file:
+                    content = await file.read()
+                    data = json.loads(content) if content else []  # 尝试加载现有内容为JSON，如果为空则初始化为空列表
+                    data.append(dict_data)
+                    await file.seek(0)
+                    await file.truncate()
+                    await file.write(json.dumps(data, ensure_ascii=False, indent=4))
+            else:
+                async with aiofiles.open(log_file_path, 'w', encoding='utf-8') as file:
+                    await file.write(json.dumps([dict_data], ensure_ascii=False, indent=4))
     except Exception as e:
         logger.error(f"文件写入错误，日志: {e}")
 
 
 # 读取历史聊天记录
-async def read_chat_history(log_file_path) -> None | dict:
-    if log_file_path.exists():
-        async with aiofiles.open(log_file_path, encoding='utf-8') as file:
-            logger.success("成功读取历史聊天记录", "读取历史聊天记录")
-            return json.loads(f"[{await file.read()}]")
-    return None
+async def read_chat_history(log_file_path) -> None | list:
+    try:
+        if log_file_path.exists():
+            async with aiofiles.open(log_file_path, encoding='utf-8') as file:
+                logger.info("读取历史聊天记录", "读取历史聊天记录")
+                content = await file.read()
+                return json.loads(content) if content else None
+        return None
+    except Exception as e:
+        logger.error(f"文件读取错误，日志: {e}")
 
 
 # 获取会话ID，群组/私聊
@@ -152,27 +157,24 @@ async def user_img(key_id, url, text):
             {"type": "image_url", "image_url": {"url": url}}
         ]
     }
-    json_data = json.dumps(data, ensure_ascii=False)
-    logger.info(f"用户/群组{key_id}将图片及文本{json_data}写入文件{log_file_path}", "Write content")
-    await write_file(log_file_path, json_data)
+    logger.info(f"[用户/群组]{key_id}将图片及文本{data}写入文件{log_file_path}", "Write content")
+    await write_file(log_file_path, data)
 
 
 # 用户输入
 async def user_in(key_id, text):
     log_file_path = log_dir / f"{key_id}.json"
     data = {"role": "user", "content": text}
-    json_data = json.dumps(data, ensure_ascii=False)
-    logger.info(f"用户/群组{key_id}将文本{json_data}写入文件{log_file_path}", "Write content")
-    await write_file(log_file_path, json_data)
+    logger.info(f"[用户/群组]{key_id}将文本{data}写入文件{log_file_path}", "Write content")
+    await write_file(log_file_path, data)
 
 
 # Ai输出
 async def ai_out(key_id, text):
     log_file_path = log_dir / f"{key_id}.json"
     data = {"role": "assistant", "content": text}
-    json_data = json.dumps(data, ensure_ascii=False)
-    logger.info(f"ChatGLM返回文本{json_data}写入文件{log_file_path}", "Write content")
-    await write_file(log_file_path, json_data)
+    logger.info(f"[ChatGLM]返回文本{data}写入文件{log_file_path}", "Write content")
+    await write_file(log_file_path, data)
 
 
 # 生成JosnWebToken
@@ -217,7 +219,7 @@ async def request(auth_token, content, model=config.glm_model) -> str | None:
         data["max_tokens"] = max_token
 
     try:
-        logger.info("正在请求ChatGLM")
+        logger.info("正在请求[ChatGLM]")
         async with httpx.AsyncClient(
                 timeout=httpx.Timeout(connect=10, read=config.glm_timeout, write=20, pool=30)) as client:
             res = await client.post(base_url, headers=headers, json=data)
