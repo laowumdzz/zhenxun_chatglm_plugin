@@ -27,9 +27,6 @@ class Config(BaseModel):
     pic_vid_model: str = "glm-4v"
     """图片及视频识别模型: glm-4v, glm-4v-plus"""
 
-    glm_api_addr: str = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-    """接口地址，一般无需设置"""
-
     glm_temperature: float = 0.6
     """采样温度，控制输出的随机性，必须为正数，取值范围是0.0～1.0，不能等于 0，值越大，会使输出更随机，更具创造性；值越小，输出会更加稳定或确定"""
 
