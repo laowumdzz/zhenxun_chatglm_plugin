@@ -7,7 +7,7 @@
 
 ## 环境要求
 Python >=3.10<br>
-Nonebot >=2.2.0
+zhenxun_bot >= v0.2.4-fix3
 
 ## 如何安装
 **目前仅支持git手动安装，后续会加入pip和nb-cil**<br>
@@ -37,10 +37,10 @@ glm_max_tokens=0
 """最大输出的token,0为不限"""
 
 glm_model="glm-4-plus"
-"""对话使用的模型，目前支持的模型有：glm-4, glm-4-plus, glm-4v, glm-4v-plus"""
+"""默认对话使用的模型，目前支持的模型有：('glm-4-plus', 'glm-4-0520', 'glm-4', 'glm-4-air', 'glm-4-airx', 'glm-4-long', 'glm-4-flashx', 'glm-4-flash', 'glm-4v-plus', 'glm-4v', 'glm-4v-flash'), ('charglm-4', 'emohaa')"""
 
 pic_vid_model="glm-4v"
-"""图片及视频识别模型: glm-4v, glm-4v-plus"""
+"""默认图片及视频识别模型: glm-4v, glm-4v-plus"""
 
 glm_temperature=0.6
 """采样温度，控制输出的随机性"""
