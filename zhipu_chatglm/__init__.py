@@ -1,4 +1,5 @@
 import random
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -24,14 +25,22 @@ require("nonebot_plugin_saa")
 刚学会python和nonebot2不久，如有不满，轻点喷
 """
 
+# 初始化
+cmd = config.glm_cmd  # 激活指令
+api_key = config.glm_api_key  # api密钥
+max_token = config.glm_max_tokens  # 最大token
+private = config.glm_private  # 是否启用私聊
+BASE_model = config.glm_model  # 默认对话模型
+BASE_picture_model = config.pic_vid_model
+
 # TODO 修改chat为可替换
 __plugin_meta__ = PluginMetadata(
     name="ChatGLM",
     description="与ChatGLM聊天吧",
-    usage="""
+    usage=f"""
     指令：
-        talk [文本]: 与Ai对话
-        chat !reset: 清除当前会话
+        {cmd} [文本]: 与Ai对话
+        清除聊天记录: 清除当前会话
         chat !img [文本?][图片本体]: 识别图片
         chat !sessions: 显示当前会话ID
         导入预设 [prompt]: 导入选择的预设
@@ -43,12 +52,6 @@ __plugin_meta__ = PluginMetadata(
     ).dict(),
 )
 
-# 初始化
-cmd = config.glm_cmd
-api_key = config.glm_api_key
-max_token = config.glm_max_tokens
-private = config.glm_private
-BASE_models = config.glm_model
 ALL_MODELS_ENCODE = {
     'language_models': (
         'glm-4-plus', 'glm-4-0520', 'glm-4', 'glm-4-air', 'glm-4-airx', 'glm-4-long', 'glm-4-flashx', 'glm-4-flash',
@@ -73,6 +76,23 @@ API_ENDPOINTS = {
 }
 
 
+# 替换字符串中特殊字符
+def replace_special_characters(text: str) -> str:
+    escape_map = {
+        "\n": "\\n",
+        "\t": "\\t",
+        "'": "\\'",
+        '"': '\\"'
+    }
+
+    def replace(match):
+        return escape_map[match.group(0)]
+
+    pattern = re.compile(r'[\n\t\'"]')
+    return pattern.sub(replace, text)
+
+
+# 获取模型URL
 def result_model_url(model: str) -> str | None:
     """
     输入模型编码，返回模型url
@@ -120,7 +140,7 @@ async def generate_jwt(apikey: str):
 
 
 # 随机选择真寻anime.json里对应键的文本
-async def get_anime(text: str) -> str | None:
+def get_anime(text: str) -> str | None:
     keys = anime_data.keys()
     for key in keys:
         if text.find(key) != -1:
@@ -128,7 +148,8 @@ async def get_anime(text: str) -> str | None:
 
 
 # 请求模型对应API
-async def request_model(content, model_type=BASE_models,
+# TODO 适配其他模型返回值
+async def request_model(content, model_type=BASE_model,
                         base_url=API_ENDPOINTS['language_models'], additional_params: dict = None) -> str | None:
     """
     请求API
@@ -164,7 +185,7 @@ async def request_model(content, model_type=BASE_models,
     except httpx.HTTPError as e:
         logger.error(f"ChatGLM请求接口出错: {e}")
         await MessageUtils.build_message(f'请求接口出错').finish()
-    logger.success("请求成功", "request_model")
+    logger.success(f"请求成功, 使用token: [{res['usage']['total_tokens']}]", "request_model")
     try:
         res_raw = res['choices'][0]['message']['content']
     except (KeyError, IndexError, TypeError):
@@ -173,58 +194,56 @@ async def request_model(content, model_type=BASE_models,
 
 
 _talk = on_alconna(
-    Alconna(rf"{cmd}", Args["text", str]),
+    Alconna(f"{cmd}", Args["text", str]),
     priority=856,
     block=True
 )
 
 # 清除当前会话历史聊天记录
 _clear_history = on_alconna(
-    r"chat !reset",
+    "清除聊天记录",
     priority=857,
     block=True
 )
 
 _identify_picture = on_alconna(
-    Alconna(r"chat !img", Args["text?", str]["image?", Image]),
+    Alconna("chat !img", Args["text?", str]["image?", Image]),
     priority=857,
     block=True
 )
 
 # 显示当前是否存在会话，存在则返回ID
 _list_sessions = on_alconna(
-    r"chat !session",
+    "chat !session",
     priority=857,
     block=True
 )
 
 _import_prompt = on_alconna(
-    Alconna(r"导入预设", Args["nickname", str]),
+    Alconna("导入预设", Args["nickname", str]),
     priority=857,
     block=True
 )
 
 _list_prompt = on_alconna(
-    r'列出预设',
+    '列出预设',
     priority=857,
     block=True
 )
 
-# TODO 添加模型切换
 _change_model = on_alconna(
-    Alconna('chat !c_mod', Args["model?", str]),
+    Alconna('切换模型', Args["model?", str]),
     priority=857,
     block=True
 )
 
 _list_model = on_alconna(
-    'chat !l_mod',
+    '显示当前模型',
     priority=857,
     block=True
 )
 
 
-# TODO 模型切换
 @_talk.handle()
 async def _(
         text: str,
@@ -237,9 +256,9 @@ async def _(
     if not text:
         await _talk.finish()
     log_file_path = log_dir / f"{key_id}.json"
-    text = text.replace("\n", "\\n").replace('\t', '\\t').replace("'", "\\'").replace('"', '\\"')
+    text = replace_special_characters(text)
     if len(text) < 6 and random.random() < 0.7:
-        if result := await get_anime(text):
+        if result := get_anime(text):
             await _talk.finish(result)
     await user_in(key_id, text)
     try:
@@ -294,11 +313,11 @@ async def _(
         await _identify_picture.finish("没有输入图片 已结束")
     await MessageUtils.build_message("正在识别图片").send(reply_to=True)
     log_file_path = log_dir / f"{key_id}.json"
-    text = text.replace("\n", "\\n").replace('\t', '\\t').replace("'", "\\'").replace('"', '\\"')
+    text = replace_special_characters(text)
     await user_img(key_id, image.url, text)
     try:
         chat_history = await read_chat_history(log_file_path)
-        result = await request_model(chat_history, config.pic_vid_model)
+        result = await request_model(chat_history, BASE_picture_model)
         await ai_out(key_id, result)
         await MessageUtils.build_message(result).finish(reply_to=True)
     except json.JSONDecodeError as e:
@@ -342,8 +361,15 @@ async def _(model: str, key_id: int | None = Depends(get_session_id)):
         await _change_model.finish()
     if not model:
         await _change_model.finish('没有输入模型')
+    if key_id in storage_models.keys() and model == storage_models[key_id][0]:
+        await _change_model.finish(f"当前模型: {model}")
     if url := result_model_url(model):
-        storage_models.update({key_id: (model, url)})
+        storage_models[key_id] = (model, url)
+        log_file_path = log_dir / f"{key_id}.json"
+        if log_file_path.exists():
+            os.remove(log_file_path)
+        await _change_model.send("已清除历史聊天记录")
+        logger.info(f"用户/群组切换模型[{model}]")
         await _change_model.finish(f'已切换模型{model}')
     await _change_model.finish(f'没有{model}模型')
 
@@ -354,5 +380,5 @@ async def _(key_id: int | None = Depends(get_session_id)):
         await _list_model.finish()
     global storage_models
     if not storage_models or key_id not in storage_models:
-        await _list_model.finish(f'当前模型{BASE_models}')
+        await _list_model.finish(f'当前模型{BASE_model}')
     await _list_model.finish(f'当前模型{storage_models[key_id][0]}')

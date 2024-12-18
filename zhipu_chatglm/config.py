@@ -20,12 +20,12 @@ class Config(BaseModel):
     glm_max_tokens: int = 0
     """最大输出的token,0为不限"""
 
-    # TODO 加入更多模型
     glm_model: str = "glm-4-plus"
-    """目前该插件支持的模型有：glm-4, glm-4-plus, glm-4v, glm-4v-plus"""
+    """默认模型，目前该插件支持的模型有：('glm-4-plus', 'glm-4-0520', 'glm-4', 'glm-4-air', 'glm-4-airx', 'glm-4-long', 'glm-4-flashx', 
+    'glm-4-flash', 'glm-4v-plus', 'glm-4v', 'glm-4v-flash'), ('charglm-4', 'emohaa')"""
 
     pic_vid_model: str = "glm-4v"
-    """图片及视频识别模型: glm-4v, glm-4v-plus"""
+    """默认模型，图片及视频识别模型: glm-4v, glm-4v-plus"""
 
     glm_temperature: float = 0.6
     """采样温度，控制输出的随机性，必须为正数，取值范围是0.0～1.0，不能等于 0，值越大，会使输出更随机，更具创造性；值越小，输出会更加稳定或确定"""

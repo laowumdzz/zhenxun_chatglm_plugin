@@ -106,7 +106,7 @@ async def user_img(key_id, url, text):
 async def user_in(key_id, text):
     log_file_path = log_dir / f"{key_id}.json"
     data = {"role": "user", "content": text}
-    logger.info(f"[用户/群组] {key_id} 将文本 {data} 写入文件 {log_file_path}", "Write content")
+    logger.info(f"[用户/群组] [{key_id}] 将文本 [{data}] 写入文件 [{log_file_path}]", "Write content")
     await write_file(log_file_path, data)
 
 
@@ -114,5 +114,5 @@ async def user_in(key_id, text):
 async def ai_out(key_id, text):
     log_file_path = log_dir / f"{key_id}.json"
     data = {"role": "assistant", "content": text}
-    logger.info(f"[ChatGLM]返回文本 {data} 写入文件 {log_file_path}", "Write content")
+    logger.info(f"[ChatGLM]返回文本 [{data}] 写入文件 [{log_file_path}]", "Write content")
     await write_file(log_file_path, data)
