@@ -5,11 +5,14 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 import jwt
+from nonebot import on_message, on_command
 from nonebot import require
+from nonebot.internal.params import Depends
 from nonebot.adapters.onebot.v11 import PrivateMessageEvent, GroupMessageEvent, MessageEvent
-from nonebot.params import Depends
 from nonebot.plugin import PluginMetadata
-from nonebot_plugin_alconna import on_alconna, Args, Alconna, Image, Match
+from nonebot.rule import to_me
+from nonebot.permission import SUPERUSER
+from nonebot_plugin_alconna import on_alconna, Args, Alconna, Image, Match, UniMsg
 
 from zhenxun.configs.utils import PluginExtraData
 from zhenxun.utils.message import MessageUtils
@@ -26,30 +29,33 @@ require("nonebot_plugin_saa")
 """
 
 # 初始化
-cmd = config.glm_cmd  # 激活指令
 api_key = config.glm_api_key  # api密钥
 max_token = config.glm_max_tokens  # 最大token
 private = config.glm_private  # 是否启用私聊
 BASE_model = config.glm_model  # 默认对话模型
 BASE_picture_model = config.pic_vid_model
 
-# TODO 修改chat为可替换
 __plugin_meta__ = PluginMetadata(
     name="ChatGLM",
     description="与ChatGLM聊天吧",
     usage=f"""
     指令：
-        {cmd} [文本]: 与Ai对话
+        @机器人 [文本]: 与Ai对话
         清除聊天记录: 清除当前会话
         chat !img [文本?][图片本体]: 识别图片
         chat !sessions: 显示当前会话ID
         导入预设 [prompt]: 导入选择的预设
+        列出预设: 列出所有预设
+        列出模型: 列出所有模型
+        切换模型 [model]: 切换模型 
+        显示当前模型: 显示当前聊天使用的模型
+    powered by -Mr.吴-
     """.strip(),
     config=Config,
     extra=PluginExtraData(
         author="Laowu",
         version="0.01",
-    ).dict(),
+    ).model_dump(),
 )
 
 ALL_MODELS_ENCODE = {
@@ -193,9 +199,9 @@ async def request_model(content, model_type=BASE_model,
     return str(res_raw)
 
 
-_talk = on_alconna(
-    Alconna(f"{cmd}", Args["text", str]),
-    priority=856,
+_talk = on_message(
+    priority=997,
+    rule=to_me(),
     block=True
 )
 
@@ -213,10 +219,11 @@ _identify_picture = on_alconna(
 )
 
 # 显示当前是否存在会话，存在则返回ID
-_list_sessions = on_alconna(
+_list_sessions = on_command(
     "chat !session",
     priority=857,
-    block=True
+    block=True,
+    permission=SUPERUSER
 )
 
 _import_prompt = on_alconna(
@@ -225,8 +232,14 @@ _import_prompt = on_alconna(
     block=True
 )
 
-_list_prompt = on_alconna(
+_list_prompt = on_command(
     '列出预设',
+    priority=857,
+    block=True
+)
+
+_list_all_model = on_command(
+    '列出模型',
     priority=857,
     block=True
 )
@@ -237,7 +250,7 @@ _change_model = on_alconna(
     block=True
 )
 
-_list_model = on_alconna(
+_list_model = on_command(
     '显示当前模型',
     priority=857,
     block=True
@@ -246,7 +259,7 @@ _list_model = on_alconna(
 
 @_talk.handle()
 async def _(
-        text: str,
+        text: UniMsg,
         key_id: int | None = Depends(get_session_id),
 ):
     if not key_id:
@@ -256,6 +269,7 @@ async def _(
     if not text:
         await _talk.finish()
     log_file_path = log_dir / f"{key_id}.json"
+    text = text.extract_plain_text()
     text = replace_special_characters(text)
     if len(text) < 6 and random.random() < 0.7:
         if result := get_anime(text):
@@ -382,3 +396,7 @@ async def _(key_id: int | None = Depends(get_session_id)):
     if not storage_models or key_id not in storage_models:
         await _list_model.finish(f'当前模型{BASE_model}')
     await _list_model.finish(f'当前模型{storage_models[key_id][0]}')
+
+
+@_list_all_model.handle()
+async def _(): await _list_all_model.finish(f"当前可用的模型: {ALL_MODELS_ENCODE}")
