@@ -4,10 +4,6 @@ from pydantic import BaseModel
 
 
 class Config(BaseModel):
-    # TODO 删除使用命令形式，群聊采用@触发，私聊直接触发
-    glm_cmd: str = "talk"
-    """插件命令"""
-
     glm_api_key: str = ""
     """你的智谱apikey"""
 
@@ -39,7 +35,3 @@ class Config(BaseModel):
 
     glm_private: bool = True
     """是否启用私聊 仅Onebot V11"""
-
-    # TODO 群聊通过@触发而无需使用命令
-    # glm_at: bool = True
-    # """是否通过@触发聊天 仅Onebot V11"""
