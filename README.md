@@ -24,9 +24,6 @@ glm_api_key='你的智谱开放平台API_KEY'
 
 ### 选填，不填使用默认值
 ```
-glm_cmd="talk"
-"""插件命令"""
-
 glm_history_path="./resources/chat_history"
 """聊天记录储存路径"""
 
