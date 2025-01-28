@@ -2,21 +2,29 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from zhenxun.configs.path_config import DATA_PATH, TEMP_PATH
+
 
 class Config(BaseModel):
     glm_api_key: str = ""
     """你的智谱apikey"""
 
-    glm_history_path: str | Path = Path() / "resources" / "chat_history"
+    glm_history_path: str | Path = TEMP_PATH / "chat_history"
     """聊天记录储存路径"""
 
-    prompt: str | Path = Path() / "data" / "prompt.json"
+    prompt: str | Path = DATA_PATH / "prompt.json"
     """预设文件路径"""
+
+    anime_files: tuple[Path] = (DATA_PATH / "anime.json", DATA_PATH / "cute_anime.json")
+    """预先定义好的词库回复内容"""
+
+    only_anime: bool = True
+    """是否只使用词库回答"""
 
     glm_max_tokens: int = 0
     """最大输出的token,0为不限"""
 
-    glm_model: str = "glm-4-plus"
+    glm_model: str = "glm-4-flash"
     """默认模型，目前该插件支持的模型有：('glm-4-plus', 'glm-4-0520', 'glm-4', 'glm-4-air', 'glm-4-airx', 'glm-4-long', 'glm-4-flashx', 
     'glm-4-flash', 'glm-4v-plus', 'glm-4v', 'glm-4v-flash'), ('charglm-4', 'emohaa')"""
 

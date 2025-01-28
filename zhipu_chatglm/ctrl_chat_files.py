@@ -1,45 +1,75 @@
 import json
 import os
+import random
+import re
 
 import aiofiles
+from nonebot import get_driver
 from nonebot import get_plugin_config
 
-from zhenxun.configs.path_config import DATA_PATH
 from zhenxun.services.log import logger
-from .config import Config
-from .config import Path
+from .config import Path, Config
 
 config = get_plugin_config(Config)
-prompt_path = config.prompt
 
-temp = config.glm_history_path
-temp.mkdir(parents=True, exist_ok=True)
-log_dir = temp
+# 路径
+default_prompt_path = config.prompt
+log_dir = config.glm_history_path
+log_dir.mkdir(parents=True, exist_ok=True)
+anime = config.anime_files
+# 布尔
+o_anime = config.only_anime
 
-# 获取zhenxun_anime内容
-with open(DATA_PATH / "anime.json", encoding="utf8") as anime_file:
-    anime_data = json.load(anime_file)
+driver = get_driver()
+
+
+async def clear_history():
+    for filename in os.listdir(log_dir):
+        file_path = os.path.join(log_dir, filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+    logger.info('清除历史聊天记录', 'chatglm_plugin')
+
+
+driver.on_startup(clear_history)
+
+# 判断词库路径是否存在并读取
+anime_data = dict()
+for anime_file in anime:
+    try:
+        if anime_file.exists():
+            with anime_file.open(encoding="utf-8") as anime_content:
+                anime_data.update(json.load(anime_content))
+    except json.JSONDecodeError:
+        logger.error(f"从文件解码JSON时出错: {anime_file}", "get_anime")
+    except Exception as ee:
+        logger.error(f"处理文件时出错[{anime_file}]: {ee}", "get_anime")
+
+
+# logger.info(f"读取{len(anime_data)}个对话预设, 内容: {anime_data.keys()}", "get_anime")
 
 
 # 获取预设文件所有预设
-def get_prompt() -> tuple | None:
-    with open(prompt_path, encoding="utf-8") as prompt_file:
+def get_prompt(prompt_path: Path | str) -> tuple | None:
+    prompt_path = Path(prompt_path) if isinstance(prompt_path, str) else prompt_path
+
+    if not prompt_path.exists():
+        return None, None
+
+    with prompt_path.open(encoding="utf-8") as prompt_file:
         prompt_file.seek(0, os.SEEK_END)
         file_size = prompt_file.tell()
         logger.info(f"预设文件大小: {file_size}")
-        if file_size != 0:
-            prompt_file.seek(0)
-            logger.success("读取预设文件", "get_prompt")
-            prompts: dict = json.load(prompt_file)
-            return prompts, prompts.keys()
-        return None, None
+        if file_size == 0:
+            return None, None
+        prompt_file.seek(0)
+        logger.success("读取预设文件", "get_prompt")
+        prompts: dict = json.load(prompt_file)
+        return prompts, list(prompts.keys())
 
 
 # 判断预设文件是否存在并读取
-if ((isinstance(prompt_path, Path) and prompt_path.exists()) or
-        (isinstance(prompt_path, str) and os.path.exists(prompt_path))):
-    prompt, nicknames = get_prompt()
-    nicknames = list(nicknames) if nicknames else None
+prompt, nicknames = get_prompt(default_prompt_path)
 
 
 # 写入历史聊天记录文件
@@ -88,25 +118,42 @@ async def read_chat_history(log_file_path) -> None | list:
         logger.error(f"文件读取错误，日志: {e}")
 
 
-# 写入图片识别文本
-async def user_img(key_id, url, text):
-    log_file_path = log_dir / f"{key_id}.json"
-    data = {
-        "role": "user",
-        "content": [
-            {"type": "text", "text": text},
-            {"type": "image_url", "image_url": {"url": url}}
-        ]
-    }
-    logger.info(f"[用户/群组]{key_id}将图片及文本{data}写入文件{log_file_path}", "Write content")
-    await write_file(log_file_path, data)
+# 预编译正则表达式
+keys_pattern = re.compile('|'.join(re.escape(key) for key in anime_data.keys()))
+
+# 随机选择词库里对应键的文本(old)
+"""
+def get_anime(text: str) -> str | None:
+    for key in anime_data.keys():
+        if text.find(key) != -1:
+            return f"关键词:{key} | {random.choice(anime_data[key])}"
+"""
+
+
+# 随机选择词库里对应键的文本
+def get_anime(text: str) -> str | None:
+    # 使用正则表达式查找匹配的键
+    match = keys_pattern.search(text)
+    if match:
+        key = match.group()
+        return f"关键词:{key} | {random.choice(anime_data[key])}"
+    return None
 
 
 # 用户输入
-async def user_in(key_id, text):
+async def user_in(key_id, text, img=False, url=None):
     log_file_path = log_dir / f"{key_id}.json"
-    data = {"role": "user", "content": text}
-    logger.info(f"[用户/群组] [{key_id}] 将文本 [{data}] 写入文件 [{log_file_path}]", "Write content")
+    if img:
+        data = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": text},
+                {"type": "image_url", "image_url": {"url": url}}
+            ]
+        }
+    else:
+        data = {"role": "user", "content": text}
+    logger.info(f"[用户/群组] [{key_id}] 将文本或图片链接 [{data}] 写入文件 [{log_file_path}]", "Write content")
     await write_file(log_file_path, data)
 
 

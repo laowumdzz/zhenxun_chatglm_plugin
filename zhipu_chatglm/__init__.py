@@ -1,4 +1,3 @@
-import random
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -7,11 +6,11 @@ import httpx
 import jwt
 from nonebot import on_message, on_command
 from nonebot import require
-from nonebot.internal.params import Depends
 from nonebot.adapters.onebot.v11 import PrivateMessageEvent, GroupMessageEvent, MessageEvent
+from nonebot.internal.params import Depends
+from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import to_me
-from nonebot.permission import SUPERUSER
 from nonebot_plugin_alconna import on_alconna, Args, Alconna, Image, Match, UniMsg
 
 from zhenxun.configs.utils import PluginExtraData
@@ -22,7 +21,14 @@ require("nonebot_plugin_session")
 require("nonebot_plugin_localstore")
 require("nonebot_plugin_saa")
 
+# TODO 添加线程锁(时间换空间)或创建多个任务(空间换时间)
+
 """
+依赖:
+aiofiles
+httpx
+PyJWT
+
 刚学会python和nonebot2不久，如有不满，轻点喷
 刚学会python和nonebot2不久，如有不满，轻点喷
 刚学会python和nonebot2不久，如有不满，轻点喷
@@ -33,7 +39,7 @@ api_key = config.glm_api_key  # api密钥
 max_token = config.glm_max_tokens  # 最大token
 private = config.glm_private  # 是否启用私聊
 BASE_model = config.glm_model  # 默认对话模型
-BASE_picture_model = config.pic_vid_model
+BASE_picture_model = config.pic_vid_model  # 默认图片和视频识别模型
 
 __plugin_meta__ = PluginMetadata(
     name="ChatGLM",
@@ -69,7 +75,7 @@ ALL_MODELS_ENCODE = {
     'role_playing_models': ('charglm-4', 'emohaa'),
     'web_search_models': ('web-search-pro',)
 }
-storage_models = {}  # 存储每个会话单独模型
+storage_models: dict[int, tuple[str, str]] = {}  # 存储每个会话单独模型
 BASE_URL = 'https://open.bigmodel.cn/api/paas/v4'
 API_ENDPOINTS = {
     'language_models': f'{BASE_URL}/chat/completions',
@@ -99,7 +105,7 @@ def replace_special_characters(text: str) -> str:
 
 
 # 获取模型URL
-def result_model_url(model: str) -> str | None:
+def get_model_url(model: str) -> str | None:
     """
     输入模型编码，返回模型url
     :param model: 模型编码
@@ -145,28 +151,19 @@ async def generate_jwt(apikey: str):
     )
 
 
-# 随机选择真寻anime.json里对应键的文本
-def get_anime(text: str) -> str | None:
-    keys = anime_data.keys()
-    for key in keys:
-        if text.find(key) != -1:
-            return random.choice(anime_data[key])
-
-
 # 请求模型对应API
 # TODO 适配其他模型返回值
-async def request_model(content, model_type=BASE_model,
-                        base_url=API_ENDPOINTS['language_models'], additional_params: dict = None) -> str | None:
+async def request_model(content, model_type, base_url, additional_params: dict = None) -> str:
     """
     请求API
     :param content: 请求内容
     :param model_type: 模型类型
     :param base_url: 模型对应API地址
     :param additional_params: 额外参数
-    :return: 消息内容或None
+    :return: 消息内容
     """
     if not api_key:
-        return None
+        raise ValueError("没有配置api_key，插件无法进行对话")
     auth_token = await generate_jwt(api_key)
     headers = {
         "Authorization": f"Bearer {auth_token}"
@@ -271,22 +268,24 @@ async def _(
     log_file_path = log_dir / f"{key_id}.json"
     text = text.extract_plain_text()
     text = replace_special_characters(text)
-    if len(text) < 6 and random.random() < 0.7:
+    if (len(text) < 6 and random.random() < 0.7) or o_anime:
         if result := get_anime(text):
             await _talk.finish(result)
-    await user_in(key_id, text)
-    try:
-        chat_history = await read_chat_history(log_file_path)
-        if key_id not in storage_models:
-            result = await request_model(chat_history)
-        else:
+        elif o_anime:
+            await _talk.finish("爪巴爪巴")
+    else:
+        await user_in(key_id, text)
+        try:
+            chat_history = await read_chat_history(log_file_path)
+            if key_id not in storage_models:
+                storage_models[key_id] = (BASE_model, get_model_url(BASE_model))
             result = await request_model(chat_history, *storage_models[key_id])
-        await ai_out(key_id, result)
-        await MessageUtils.build_message(result).finish(reply_to=True)
-    except json.JSONDecodeError as e:
-        os.remove(log_file_path)
-        logger.error(f"JSON转换错误: {e}")
-        await _talk.finish(f'聊天记录炸了，已重置\n会话ID: {key_id}')
+            await ai_out(key_id, result)
+            await MessageUtils.build_message(result).finish(reply_to=True)
+        except json.JSONDecodeError as e:
+            os.remove(log_file_path)
+            logger.error(f"JSON转换错误: {e}")
+            await _talk.finish(f'聊天记录炸了，已重置\n会话ID: {key_id}')
 
 
 @_clear_history.handle()
@@ -302,7 +301,6 @@ async def _(
     await _clear_history.finish("当前没有会话")
 
 
-# TODO 自动切换图片识别模型
 @_identify_picture.handle()
 async def _(text: Match[str], image: Match[Image]):
     if text.available:
@@ -325,13 +323,16 @@ async def _(
         await _identify_picture.finish("没有配置api_key，无法对话")
     if not image:
         await _identify_picture.finish("没有输入图片 已结束")
+    if (key_id not in storage_models) or (
+            storage_models[key_id][0] not in {'glm-4v-plus-0111', 'glm-4v-plus', 'glm-4v', 'glm-4v-flash'}):
+        storage_models[key_id] = (BASE_picture_model, get_model_url(BASE_picture_model))
     await MessageUtils.build_message("正在识别图片").send(reply_to=True)
     log_file_path = log_dir / f"{key_id}.json"
     text = replace_special_characters(text)
-    await user_img(key_id, image.url, text)
+    await user_in(key_id, text, img=True, url=image.url)
     try:
         chat_history = await read_chat_history(log_file_path)
-        result = await request_model(chat_history, BASE_picture_model)
+        result = await request_model(chat_history, *storage_models[key_id])
         await ai_out(key_id, result)
         await MessageUtils.build_message(result).finish(reply_to=True)
     except json.JSONDecodeError as e:
@@ -377,7 +378,7 @@ async def _(model: str, key_id: int | None = Depends(get_session_id)):
         await _change_model.finish('没有输入模型')
     if key_id in storage_models.keys() and model == storage_models[key_id][0]:
         await _change_model.finish(f"当前模型: {model}")
-    if url := result_model_url(model):
+    if url := get_model_url(model):
         storage_models[key_id] = (model, url)
         log_file_path = log_dir / f"{key_id}.json"
         if log_file_path.exists():
@@ -393,7 +394,7 @@ async def _(key_id: int | None = Depends(get_session_id)):
     if not key_id:
         await _list_model.finish()
     global storage_models
-    if not storage_models or key_id not in storage_models:
+    if not storage_models or (key_id not in storage_models):
         await _list_model.finish(f'当前模型{BASE_model}')
     await _list_model.finish(f'当前模型{storage_models[key_id][0]}')
 
