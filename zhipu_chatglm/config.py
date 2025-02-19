@@ -15,10 +15,10 @@ class Config(BaseModel):
     prompt: str | Path = DATA_PATH / "prompt.json"
     """预设文件路径"""
 
-    anime_files: tuple[Path] = (DATA_PATH / "anime.json", DATA_PATH / "cute_anime.json")
+    lexicon_files: tuple[Path] = (DATA_PATH / "anime.json", DATA_PATH / "cute_anime.json")
     """预先定义好的词库回复内容"""
 
-    only_anime: bool = True
+    only_lexicon: bool = False
     """是否只使用词库回答"""
 
     glm_max_tokens: int = 0
