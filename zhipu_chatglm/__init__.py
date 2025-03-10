@@ -1,27 +1,36 @@
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from threading import Lock
+from typing import Callable
 
 import httpx
 import jwt
-from nonebot import on_message, on_command
-from nonebot import require
+from nonebot import require, on_message, on_command
 from nonebot.adapters.onebot.v11 import PrivateMessageEvent, GroupMessageEvent, MessageEvent
 from nonebot.internal.params import Depends
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import to_me
-from nonebot_plugin_alconna import on_alconna, Args, Alconna, Image, Match, UniMsg
+from nonebot_plugin_alconna import (
+    Args,
+    Alconna,
+    Image,
+    Match,
+    UniMsg,
+    on_alconna,
+)
+from nonebot_plugin_uninfo import Uninfo
 
 from zhenxun.configs.utils import PluginExtraData
 from zhenxun.utils.message import MessageUtils
+from ._enum import ChatType, WordType
+from ._model import WordBank, ImportHelper
 from .ctrl_chat_files import *
 
 require("nonebot_plugin_session")
 require("nonebot_plugin_localstore")
 require("nonebot_plugin_saa")
-
-# TODO 添加线程锁(时间换空间)或创建多个任务(空间换时间)
 
 """
 依赖:
@@ -36,6 +45,9 @@ max_token = config.glm_max_tokens  # 最大token
 private = config.glm_private  # 是否启用私聊
 BASE_model = config.glm_model  # 默认对话模型
 BASE_picture_model = config.pic_vid_model  # 默认图片和视频识别模型
+listen_type: ChatType = config.listen_type  # 监听类型
+current_mod: WordType = config.match_rule  # 匹配规则
+only_lex = config.only_lexicon  # 是否只使用词库
 lock = Lock()  # 线程锁
 
 __plugin_meta__ = PluginMetadata(
@@ -61,28 +73,11 @@ __plugin_meta__ = PluginMetadata(
     ).model_dump(),
 )
 
-ALL_MODELS_ENCODE = {
-    'language_models': (
-        'glm-4-plus', 'glm-4-0520', 'glm-4', 'glm-4-air', 'glm-4-airx', 'glm-4-long', 'glm-4-flashx', 'glm-4-flash',
-        'glm-4v-plus', 'glm-4v', 'glm-4v-flash'),
-    'text_to_images_models': ('cogview-3-plus', 'cogview-3'),
-    'text_to_videos_models': ('cogvideox',),
-    'agent_models': ('glm-4-alltools',),
-    'code_models': ('codegeex-4',),
-    'role_playing_models': ('charglm-4', 'emohaa'),
-    'web_search_models': ('web-search-pro',)
-}
-storage_models: dict[int, tuple[str, str]] = {}  # 存储每个会话单独模型
-BASE_URL = 'https://open.bigmodel.cn/api/paas/v4'
-API_ENDPOINTS = {
-    'language_models': f'{BASE_URL}/chat/completions',
-    'text_to_images_models': f'{BASE_URL}/images/generations',
-    'text_to_videos_models': f'{BASE_URL}/videos/generations',
-    'agent_models': f'{BASE_URL}/chat/completions',
-    'code_models': f'{BASE_URL}/chat/completions',
-    'role_playing_models': f'{BASE_URL}/chat/completions',
-    'web_search_models': f'{BASE_URL}/tools'
-}
+if not api_key:
+    logger.error("没有配置api_key，插件将无法进行对话")
+
+storage_models: dict[int, tuple[str, callable([])]] = {}  # 存储每个会话单独模型
+"""storage_models: {会话ID: (模型名称, 模型url)}"""
 
 
 # 替换字符串中特殊字符
@@ -102,49 +97,54 @@ def replace_special_characters(text: str) -> str:
 
 
 # 获取模型URL
-def get_model_url(model: str) -> str | None:
+def get_model_url(model: str) -> Callable[[], str] | None:
     """
     输入模型编码，返回模型url
     :param model: 模型编码
     :return: 模型对应url或None
     """
-    for model_type, models in ALL_MODELS_ENCODE.items():
-        if model in models:
-            return API_ENDPOINTS[model_type]
+    for models in ModelsEncoe:
+        if model in models.value:
+            return ModelsApisLink[models.name].value
     return None
 
 
-if not api_key:
-    logger.error("没有配置api_key，插件将无法进行对话")
-
-
-async def get_session_id(event: MessageEvent) -> int | None:
+class ChatType(StrEnum):
     """
-    获取会话ID，群组/私聊
-    :param event: 事件
+    监听对象
+    """
+    PRIVATE = "PRIVATE"
+    """私聊"""
+    GROUP = "GROUP"
+    """群聊"""
+    ALL = "ALL"
+    """全局"""
+
+
+def get_session_id(chat_type: ChatType = ChatType.ALL):
+    """
+    获取会话ID, 群组/私聊
+    :param chat_type: 监听对象类型
     :return: 会话ID
     """
-    if isinstance(event, GroupMessageEvent):
-        logger.success(f"获取群聊ID", "ChatGLM", result=f"{event.group_id}")
-        return event.group_id
-    elif isinstance(event, PrivateMessageEvent) and private:
-        logger.success(f"获取私聊ID", "ChatGLM", result=f"{event.user_id}")
-        return event.user_id
-    return None
+
+    async def depend(event: MessageEvent) -> int | None:
+        """
+        获取会话ID, 群组/私聊
+        :return: 会话ID
+        """
+        if chat_type in {ChatType.GROUP, ChatType.ALL} and isinstance(event, GroupMessageEvent):
+            logger.success(f"获取群聊ID", "ChatGLM", result=f"{event.group_id}")
+            return event.group_id
+        if chat_type in {ChatType.PRIVATE, ChatType.ALL} and isinstance(event, PrivateMessageEvent):
+            logger.success(f"获取私聊ID", "ChatGLM", result=f"{event.user_id}")
+            return event.user_id
+        return None
+
+    return Depends(depend)
 
 
-get_session_id = Depends(get_session_id)
-
-
-def is_lock_acquired():
-    """
-    检查锁是否被占用。
-    :return: 如果锁未被占用，返回True；如果锁被占用，返回False。
-    """
-    acquired = lock.acquire(blocking=False)
-    if acquired:
-        lock.release()
-    return acquired
+get_session_id = get_session_id()
 
 
 # 生成JosnWebToken
@@ -206,16 +206,16 @@ async def request_model(content, model_type, base_url, additional_params: dict =
             await MessageUtils.build_message(f'请求接口出错').finish()
         logger.success("请求模型API", "ChatGLM", result=f"请求成功, 使用token: [{res['usage']['total_tokens']}]")
         try:
-            res_raw = res['choices'][0]['message']['content']
+            res = res['choices'][0]['message']['content']
         except (KeyError, IndexError, TypeError):
-            res_raw = res
-        return str(res_raw)
+            pass
+        return str(res)
 
 
 _talk = on_message(
     priority=997,
     rule=to_me(),
-    block=True
+    block=True,
 )
 
 # 清除当前会话历史聊天记录
@@ -226,7 +226,7 @@ _clear_history = on_alconna(
 )
 
 _identify_picture = on_alconna(
-    Alconna("chat !img", Args["text?", str]["image?", Image]),
+    Alconna("chat !img", Args["text", str]["image?", Image]),
     priority=857,
     block=True
 )
@@ -269,28 +269,30 @@ _list_model = on_command(
     block=True
 )
 
+_import_matcher = on_command(
+    "词库导入",
+    permission=SUPERUSER,
+    priority=857,
+    block=True,
+)
+
 
 @_talk.handle()
 async def _(
         text: UniMsg,
         key_id: int | None = get_session_id,
 ):
-    if not key_id:
+    if not (key_id and api_key and text):
         await _talk.finish()
-    if not api_key:
-        await _talk.finish("没有配置api_key，无法对话")
-    if not text:
-        await _talk.finish()
-    if is_lock_acquired():
-        log_file_path = log_dir / f"{key_id}.json"
+    if not lock.locked():
         text = text.extract_plain_text()
         text = replace_special_characters(text)
-        if (len(text) < 6 and random.random() < 0.7) or b_lexicon:
-            if result := get_lexicon_result(text):
-                await _talk.finish(result)
-            elif b_lexicon:
-                await _talk.finish("爪巴爪巴")
+        if (answer := await WordBank.get_answer(text)) or only_lex:
+            message = "本喵不理解哦" if not answer[0] else answer[0]
+            logger.info(f"匹配到词库: {answer[1]} -> {message}, 匹配规则: [{current_mod.text}]")
+            await _talk.finish(message)
         else:
+            log_file_path = log_dir / f"{key_id}.json"
             await user_in(key_id, text)
             try:
                 chat_history = await read_chat_history(log_file_path)
@@ -313,7 +315,7 @@ async def _(
 ):
     if not key_id:
         await _clear_history.finish()
-    if is_lock_acquired():
+    if not lock.locked():
         log_file_path = log_dir / f"{key_id}.json"
         if log_file_path.exists():
             os.remove(log_file_path)
@@ -345,7 +347,7 @@ async def _(
         await _identify_picture.finish("没有配置api_key，无法对话")
     if not image:
         await _identify_picture.finish("没有输入图片 已结束")
-    if is_lock_acquired():
+    if not lock.locked():
         if (key_id not in storage_models) or (
                 storage_models[key_id][0] not in {'glm-4v-plus-0111', 'glm-4v-plus', 'glm-4v', 'glm-4v-flash'}):
             storage_models[key_id] = (BASE_picture_model, get_model_url(BASE_picture_model))
@@ -384,7 +386,7 @@ async def _(nickname: str, key_id: int | None = get_session_id):
         await _import_prompt.finish()
     if not nicknames or (nickname not in nicknames):
         await _import_prompt.finish(f"没有{nickname}预设")
-    if is_lock_acquired():
+    if not lock.locked():
         result = await file_init(key_id, nickname)
         await _import_prompt.send(f"正在导入预设")
         message = f"{result}\n会话ID: {key_id}"
@@ -405,7 +407,7 @@ async def _(model: str, key_id: int | None = get_session_id):
         await _change_model.finish('没有输入模型')
     if key_id in storage_models.keys() and model == storage_models[key_id][0]:
         await _change_model.finish(f"当前模型: {model}")
-    if is_lock_acquired():
+    if not lock.locked():
         if url := get_model_url(model):
             storage_models[key_id] = (model, url)
             log_file_path = log_dir / f"{key_id}.json"
@@ -430,4 +432,23 @@ async def _(key_id: int | None = get_session_id):
 
 
 @_list_all_model.handle()
-async def _(): await _list_all_model.finish(f"当前可用的模型: {ALL_MODELS_ENCODE}")
+async def _():
+    model_list = "模型类别: 模型名称"
+    index = 1
+    for model in ModelsEncoe:
+        model_list += f"\n{index}.{model.name}: {model.value}"
+        index += 1
+    await _list_all_model.finish(f"当前可用的模型: \n{model_list}")
+
+
+@_import_matcher.handle()
+async def _(
+        session: Uninfo,
+):
+    await MessageUtils.build_message("开始尝试导入词条文件").send()
+    logger.info("导入词条", session=session)
+    try:
+        result = await ImportHelper.import_word()
+        await MessageUtils.build_message(result).send(reply_to=True)
+    except FileNotFoundError:
+        await MessageUtils.build_message("文件不存在捏...").finish()

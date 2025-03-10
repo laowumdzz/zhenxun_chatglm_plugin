@@ -1,26 +1,46 @@
 import json
 import os
-import random
-import re
+from enum import Enum, StrEnum
 
 import aiofiles
 from nonebot import get_driver
 from nonebot import get_plugin_config
 
 from zhenxun.services.log import logger
-from .config import Path, Config
+from .config import Config, Path
 
 config = get_plugin_config(Config)
 
-# 路径
 default_prompt_path = config.prompt
 log_dir = config.glm_history_path
 log_dir.mkdir(parents=True, exist_ok=True)
-lexicon = config.lexicon_files
-# 布尔
-b_lexicon = config.only_lexicon
 
 driver = get_driver()
+
+
+# 模型: 模型编码
+class ModelsEncoe(Enum):
+    language_models = (
+        'glm-4-plus', 'glm-4-0520', 'glm-4', 'glm-4-air', 'glm-4-airx', 'glm-4-long', 'glm-4-flashx', 'glm-4-flash',
+        'glm-4v-plus', 'glm-4v', 'glm-4v-flash')
+    text_to_images_models = ('cogview-3-plus', 'cogview-3')
+    text_to_videos_models = ('cogvideox',)
+    agent_models = ('glm-4-alltools',)
+    code_models = ('codegeex-4',)
+    role_playing_models = ('charglm-4', 'emohaa')
+    web_search_models = ('web-search-pro',)
+
+
+# 模型: 模型链接
+class ModelsApisLink(StrEnum):
+    BASE_URL = 'https://open.bigmodel.cn/api/paas/v4'
+    language_models = f'{BASE_URL}/chat/completions'
+    text_to_images_models = f'{BASE_URL}/images/generations'
+    text_to_videos_models = f'{BASE_URL}/videos/generations'
+    agent_models = f'{BASE_URL}/chat/completions'
+    code_models = f'{BASE_URL}/chat/completions'
+    role_playing_models = f'{BASE_URL}/chat/completions'
+    web_search_models = f'{BASE_URL}/tools'
 
 
 async def clear_history():
@@ -32,18 +52,6 @@ async def clear_history():
 
 
 driver.on_startup(clear_history)
-
-# 判断词库路径是否存在并读取
-lexicon_data = dict()
-for anime_file in lexicon:
-    try:
-        if anime_file.exists():
-            with anime_file.open(encoding="utf-8") as anime_content:
-                lexicon_data.update(json.load(anime_content))
-    except json.JSONDecodeError:
-        logger.error(f"从文件解码JSON时出错: {anime_file}", "get_anime")
-    except Exception as ee:
-        logger.error(f"处理文件时出错[{anime_file}]: {ee}", "get_anime")
 
 
 # 获取预设文件所有预设
@@ -113,20 +121,6 @@ async def read_chat_history(log_file_path) -> None | list:
         return None
     except Exception as e:
         logger.error(f"文件读取错误，日志: {e}")
-
-
-# 预编译正则表达式
-keys_pattern = re.compile('|'.join(re.escape(key) for key in lexicon_data.keys()))
-
-
-# 随机选择词库里对应键的文本
-def get_lexicon_result(text: str) -> str | None:
-    # 使用正则表达式查找匹配的键
-    match = keys_pattern.search(text)
-    if match:
-        key = match.group()
-        return random.choice(lexicon_data[key])
-    return None
 
 
 # 用户输入
