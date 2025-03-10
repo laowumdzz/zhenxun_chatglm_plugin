@@ -24,7 +24,7 @@ from nonebot_plugin_uninfo import Uninfo
 
 from zhenxun.configs.utils import PluginExtraData
 from zhenxun.utils.message import MessageUtils
-from ._enum import ChatType, WordType
+from ._enum import ChatType, WordType, ModelsEncoe, ModelsApisLink
 from ._model import WordBank, ImportHelper
 from .ctrl_chat_files import *
 
@@ -109,19 +109,7 @@ def get_model_url(model: str) -> Callable[[], str] | None:
     return None
 
 
-class ChatType(StrEnum):
-    """
-    监听对象
-    """
-    PRIVATE = "PRIVATE"
-    """私聊"""
-    GROUP = "GROUP"
-    """群聊"""
-    ALL = "ALL"
-    """全局"""
-
-
-def get_session_id(chat_type: ChatType = ChatType.ALL):
+def get_session_id(chat_type: ChatType = listen_type):
     """
     获取会话ID, 群组/私聊
     :param chat_type: 监听对象类型
@@ -153,17 +141,18 @@ async def generate_jwt(apikey: str):
         key_id, secret = apikey.split(".")
     except ValueError as e:
         await MessageUtils.build_message(f"错误的apikey！{e}").finish()
-    payload = {
-        "api_key": key_id,
-        "exp": datetime.now(timezone.utc) + timedelta(days=1),
-        "timestamp": int(round(time.time() * 1000)),
-    }
-    return jwt.encode(
-        payload,
-        secret,
-        algorithm="HS256",
-        headers={"alg": "HS256", "sign_type": "SIGN"},
-    )
+    else:
+        payload = {
+            "api_key": key_id,
+            "exp": datetime.now(timezone.utc) + timedelta(days=1),
+            "timestamp": int(round(time.time() * 1000)),
+        }
+        return jwt.encode(
+            payload,
+            secret,
+            algorithm="HS256",
+            headers={"alg": "HS256", "sign_type": "SIGN"},
+        )
 
 
 # 请求模型对应API
